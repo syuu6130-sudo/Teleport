@@ -18,6 +18,7 @@ local Window = Rayfield:CreateWindow({
 })
 
 local MainTab = Window:CreateTab("🏃 Main", nil)
+local FollowTab = Window:CreateTab("👤 Follow", nil)
 local DetectionTab = Window:CreateTab("🔍 Detection", nil)
 local SettingsTab = Window:CreateTab("⚙️ Settings", nil)
 
@@ -31,6 +32,13 @@ local currentStage = 1
 local tpDelay = 0.5
 local stages = {}
 local detectedObjects = {}
+
+-- Follow variables
+local followEnabled = false
+local targetPlayerName = ""
+local targetPlayer = nil
+local followDistance = 3
+local followConnection = nil
 
 -- より詳細なステージ検出関数
 local function findStages()
@@ -147,6 +155,101 @@ local function teleportToStage(stageNumber)
     return false
 end
 
+-- プレイヤーリストを取得
+local function getPlayerList()
+    local players = game:GetService("Players"):GetPlayers()
+    local names = {}
+    for _, plr in pairs(players) do
+        if plr ~= player then
+            table.insert(names, plr.Name)
+        end
+    end
+    return names
+end
+
+-- 尾行開始関数
+local function startFollowing(targetName)
+    -- 既存の接続を切断
+    if followConnection then
+        followConnection:Disconnect()
+        followConnection = nil
+    end
+    
+    -- プレイヤーを検索
+    targetPlayer = game:GetService("Players"):FindFirstChild(targetName)
+    
+    if not targetPlayer then
+        Rayfield:Notify({
+           Title = "エラー",
+           Content = "プレイヤー " .. targetName .. " が見つかりません",
+           Duration = 3,
+           Image = 4483362458,
+        })
+        followEnabled = false
+        return false
+    end
+    
+    Rayfield:Notify({
+       Title = "尾行開始",
+       Content = targetName .. " を尾行しています",
+       Duration = 3,
+       Image = 4483362458,
+    })
+    
+    -- 尾行ループ
+    followConnection = game:GetService("RunService").Heartbeat:Connect(function()
+        if not followEnabled then
+            if followConnection then
+                followConnection:Disconnect()
+                followConnection = nil
+            end
+            return
+        end
+        
+        -- ターゲットプレイヤーのキャラクターを取得
+        if targetPlayer and targetPlayer.Character then
+            local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+            character = player.Character
+            
+            if targetHRP and character and character:FindFirstChild("HumanoidRootPart") then
+                humanoidRootPart = character.HumanoidRootPart
+                local targetPos = targetHRP.Position
+                local offset = Vector3.new(0, 0, followDistance)
+                
+                -- ターゲットの後ろに位置する
+                local targetLook = targetHRP.CFrame.LookVector
+                humanoidRootPart.CFrame = CFrame.new(targetPos - targetLook * followDistance, targetPos)
+            end
+        else
+            -- ターゲットが存在しない場合
+            followEnabled = false
+            Rayfield:Notify({
+               Title = "尾行終了",
+               Content = targetName .. " が存在しません",
+               Duration = 3,
+               Image = 4483362458,
+            })
+        end
+    end)
+    
+    return true
+end
+
+-- 尾行停止関数
+local function stopFollowing()
+    followEnabled = false
+    if followConnection then
+        followConnection:Disconnect()
+        followConnection = nil
+    end
+    Rayfield:Notify({
+       Title = "尾行停止",
+       Content = "尾行を停止しました",
+       Duration = 2,
+       Image = 4483362458,
+    })
+end
+
 -- Main Tab UI
 local Section = MainTab:CreateSection("ステージテレポート")
 
@@ -261,6 +364,134 @@ local AutoTpToggle = MainTab:CreateToggle({
    end,
 })
 
+-- Follow Tab UI
+local FollowSection = FollowTab:CreateSection("プレイヤー尾行")
+
+local PlayerInput = FollowTab:CreateInput({
+   Name = "プレイヤー名",
+   PlaceholderText = "尾行するプレイヤー名を入力",
+   RemoveTextAfterFocusLost = false,
+   Callback = function(text)
+      targetPlayerName = text
+   end,
+})
+
+local FollowToggle = FollowTab:CreateToggle({
+   Name = "尾行を有効化",
+   CurrentValue = false,
+   Flag = "FollowToggle",
+   Callback = function(value)
+      followEnabled = value
+      if value then
+         if targetPlayerName ~= "" then
+            startFollowing(targetPlayerName)
+         else
+            Rayfield:Notify({
+               Title = "エラー",
+               Content = "プレイヤー名を入力してください",
+               Duration = 3,
+               Image = 4483362458,
+            })
+            followEnabled = false
+         end
+      else
+         stopFollowing()
+      end
+   end,
+})
+
+local FollowSettingsSection = FollowTab:CreateSection("尾行設定")
+
+local DistanceSlider = FollowTab:CreateSlider({
+   Name = "尾行距離",
+   Range = {1, 20},
+   Increment = 0.5,
+   Suffix = " studs",
+   CurrentValue = 3,
+   Flag = "FollowDistance",
+   Callback = function(value)
+      followDistance = value
+   end,
+})
+
+local PlayerListSection = FollowTab:CreateSection("サーバー内のプレイヤー")
+
+local PlayerListLabel = FollowTab:CreateLabel("プレイヤーリストを更新してください")
+
+local RefreshPlayersButton = FollowTab:CreateButton({
+   Name = "プレイヤーリストを更新",
+   Callback = function()
+      local players = getPlayerList()
+      if #players > 0 then
+         local listText = "サーバー内のプレイヤー:\n\n"
+         for i, name in ipairs(players) do
+            listText = listText .. "• " .. name .. "\n"
+            if i >= 15 then
+               listText = listText .. "...他 " .. (#players - 15) .. " 人"
+               break
+            end
+         end
+         PlayerListLabel:Set(listText)
+         
+         Rayfield:Notify({
+            Title = "更新完了",
+            Content = #players .. " 人のプレイヤーが見つかりました",
+            Duration = 2,
+            Image = 4483362458,
+         })
+      else
+         PlayerListLabel:Set("他のプレイヤーが見つかりません")
+      end
+   end,
+})
+
+local QuickFollowSection = FollowTab:CreateSection("クイック選択")
+
+-- 動的にプレイヤーボタンを生成
+local function createPlayerButtons()
+   local players = getPlayerList()
+   for i = 1, math.min(5, #players) do
+      FollowTab:CreateButton({
+         Name = "📍 " .. players[i],
+         Callback = function()
+            targetPlayerName = players[i]
+            PlayerInput:Set(players[i])
+            Rayfield:Notify({
+               Title = "選択",
+               Content = players[i] .. " を選択しました",
+               Duration = 2,
+               Image = 4483362458,
+            })
+         end,
+      })
+   end
+end
+
+-- 初期ボタン生成
+task.spawn(createPlayerButtons)
+
+-- プレイヤー退出時の処理
+game:GetService("Players").PlayerRemoving:Connect(function(removedPlayer)
+   if targetPlayer == removedPlayer and followEnabled then
+      stopFollowing()
+   end
+end)
+
+-- Settings Tab
+local SettingsSection = SettingsTab:CreateSection("設定")
+
+local DelaySlider = SettingsTab:CreateSlider({
+   Name = "TP間隔 (秒)",
+   Range = {0.1, 5},
+   Increment = 0.1,
+   Suffix = "秒",
+   CurrentValue = 0.5,
+   Flag = "TpDelay",
+   Callback = function(value)
+      tpDelay = value
+   end,
+})
+
 -- Detection Tab
 local DetectionSection = DetectionTab:CreateSection("ステージ検出")
 
@@ -328,21 +559,6 @@ local PrintButton = DetectionTab:CreateButton({
          Duration = 3,
          Image = 4483362458,
       })
-   end,
-})
-
--- Settings Tab
-local SettingsSection = SettingsTab:CreateSection("設定")
-
-local DelaySlider = SettingsTab:CreateSlider({
-   Name = "TP間隔 (秒)",
-   Range = {0.1, 5},
-   Increment = 0.1,
-   Suffix = "秒",
-   CurrentValue = 0.5,
-   Flag = "TpDelay",
-   Callback = function(value)
-      tpDelay = value
    end,
 })
 
